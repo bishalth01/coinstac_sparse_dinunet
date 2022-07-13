@@ -1,0 +1,320 @@
+"""
+@author: Aashis Khanal
+@email: sraashis@gmail.com
+"""
+
+import json as _json
+import os as _os
+import shutil as _shutil
+import sys
+import time as _time
+import traceback as _tback
+from os import sep as _sep
+from typing import List as _List
+
+import coinstac_sparse_dinunet.config as _conf
+import coinstac_sparse_dinunet.utils as _utils
+from coinstac_sparse_dinunet.config.keys import *
+from coinstac_sparse_dinunet.data import COINNDataHandle as _DataHandle
+from coinstac_sparse_dinunet.utils import FrozenDict as _FrozenDict
+
+from ..learner import COINNLearner as _dSGDLearner
+from ..rankdad import DADLearner as _DADLearner
+from ..powersgd import PowerSGDLearner as _PowerSGDLearner
+
+
+class COINNLocal:
+    _PROMPT_TASK_ = "Task id must be given."
+    _PROMPT_MODE_ = f"Mode must be provided and should be one of {[Mode.TRAIN, Mode.TEST]}."
+
+    def __init__(self, cache: dict = None, input: dict = None, state: dict = None,
+                 task_id='nn_task',
+                 mode: str = None,
+                 batch_size: int = 8,
+                 local_iterations: int = 1,
+                 epochs: int = 31,
+                 validation_epochs: int = 1,
+                 learning_rate: float = 0.001,
+                 gpus: _List[int] = None,
+                 pin_memory: bool = False,
+                 num_workers: int = 0,
+                 load_limit: int = _conf.max_size,
+                 load_sparse=False,
+                 pretrained_path: str = None,
+                 patience: int = None,
+                 num_folds: int = None,
+                 split_ratio=None,
+                 pretrain_args: dict = None,
+                 dataloader_args: dict = None,
+                 verbose=False,
+                 monitor_metric='f1',
+                 metric_direction='maximize',
+                 log_header='Loss|Accuracy,F1',
+                 agg_engine='dSGD',
+                 num_reducers=2,
+                 precision_bits=32,
+                 **kw):
+
+        self.out = {}
+        self.cache = cache
+        self.input = _FrozenDict(input)
+        self.state = _FrozenDict(state)
+
+        self._args = {}
+        self._args['task_id'] = task_id  #
+        self._args['mode'] = mode  # test/train
+        self._args['batch_size'] = batch_size
+        self._args['local_iterations'] = local_iterations
+        self._args['epochs'] = epochs
+        self._args['validation_epochs'] = validation_epochs
+        self._args['learning_rate'] = learning_rate
+        self._args['gpus'] = gpus
+        self._args['pin_memory'] = pin_memory
+        self._args['num_workers'] = num_workers
+        self._args['load_limit'] = load_limit
+        self._args['load_sparse'] = load_sparse
+        self._args['pretrained_path'] = pretrained_path
+        self._args['patience'] = patience if patience else epochs
+        self._args['split_ratio'] = split_ratio
+        self._args['num_folds'] = num_folds
+        self._args['verbose'] = verbose
+        self._args['monitor_metric'] = monitor_metric
+        self._args['metric_direction'] = metric_direction
+        self._args['log_header'] = log_header
+        self._args['agg_engine'] = agg_engine
+        self._args['num_reducers'] = num_reducers
+        self._args['precision_bits'] = precision_bits
+
+        self._args.update(**kw)
+        self._args = _FrozenDict(self._args)
+        self._pretrain_args = pretrain_args if pretrain_args else {}
+        self._dataloader_args = dataloader_args if dataloader_args else {}
+
+        """ ############### Cache args from input specifications ########### """
+        if not self.cache.get(Key.ARGS_CACHED):
+            self.cache.update(**self.input)
+
+            task_args = self.input.get(f"{self.input.get('task_id')}_args", {})
+            self.cache.update(**task_args)
+
+            agg_engine_args = self.input.get(f"{self.input.get('agg_engine')}_args", {})
+            self.cache.update(**agg_engine_args)
+
+            data_conf = self.input.get(f"{self.input.get('task_id')}_data_conf", {})
+            for k, v in data_conf.items():
+                if k not in task_args and k not in agg_engine_args:
+                    self.cache[k] = v
+
+            for k in self._args:
+                if self.cache.get(k) is None:
+                    self.cache[k] = self._args[k]
+
+            assert self.cache['task_id'] is not None, self._PROMPT_TASK_
+            assert self.cache['mode'] in [Mode.TRAIN, Mode.TEST], self._PROMPT_MODE_
+
+            if self.cache['mode'] == Mode.TRAIN:
+                assert self.cache['split_ratio'] or self.cache["num_folds"], "Split ratio or K(num k-folds) is needed."
+
+            self.cache[Key.ARGS_CACHED] = True
+        """####################################################################"""
+
+    def _init_runs(self, trainer):
+        out = {}
+        out.update(trainer.data_handle.prepare_data())
+        self.cache['num_folds'] = len(self.cache['splits'])
+        trainer.init_nn(set_devices=True)
+        # self.cache['my_logger'].write("Initializing nn init runs completed")
+        out['data_size'] = {}
+        for k, sp in self.cache['splits'].items():
+            sp = _json.loads(open(self.cache['split_dir'] + _os.sep + sp).read())
+            out['data_size'][k] = dict((key, len(sp.get(key, []))) for key in sp)
+        # self.cache['my_logger'].write("Completed loading splits for init runs")
+        return out
+
+    def _next_run(self, trainer, my_logger, dataset_cls=None):
+        # self.cache['my_logger'].write("\n Inside a function of local next run")
+
+        out = {}
+        self.cache.update(cursor=0)
+        self.cache[Key.TRAIN_SERIALIZABLE] = []
+        self.cache['split_file'] = self.cache['splits'][self.cache['split_ix']]
+        self.cache['log_dir'] = _os.path.join(
+            self.state['outputDirectory'],
+            self.cache['task_id'],
+            f"fold_{self.cache['split_ix']}"
+        )
+
+
+        _os.makedirs(self.cache['log_dir'], exist_ok=True)
+
+        # Initialize a neural network weights and everything
+
+        trainer.init_nn(init_model=True, init_optim=True, set_devices=True, init_weights=True)
+        first_model_key = list(trainer.nn.keys())[0]
+        first_model = trainer.nn[first_model_key]
+        my_logger.write("\n The previous model parameter sparsity is" + str(_utils.get_model_sps(first_model,  my_logger)))
+        trainer.apply_snip_pruning(dataset_cls, my_logger)
+        final_model = trainer.nn[first_model_key]
+        my_logger.write("\n The final model parameter sparsity is" + str(_utils.get_model_sps(final_model,  my_logger)))
+        self.cache['best_nn_state'] = f"best.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
+        self.cache['latest_nn_state'] = f"latest.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
+        out['phase'] = Phase.COMPUTATION
+        return out
+
+    def _pretrain_local(self, trainer_cls, datahandle_cls, train_dataset, validation_dataset):
+        out = {'phase': Phase.COMPUTATION}
+        if self._pretrain_args.get('epochs', 0) > 0 and self.cache['pretrain']:
+            cache = {**self.cache}
+            cache.update(cache.get('pretrain_args', self._pretrain_args))
+            trainer = trainer_cls(data_handle=datahandle_cls(
+                cache=self.cache, input=self.input, state=self.state,
+                dataloader_args=self._dataloader_args
+            ))
+            trainer.init_nn()
+
+            trainer.init_training_cache()
+            out.update(**trainer.train_local(train_dataset, validation_dataset))
+            out['phase'] = Phase.PRE_COMPUTATION
+
+        if self._pretrain_args.get('epochs', 0) > 0 and any(
+                [r['pretrain'] for r in self.input['global_runs'].values()]):
+            out['phase'] = Phase.PRE_COMPUTATION
+        return out
+
+    def compute(self, mp_pool,
+                trainer_cls,
+                dataset_cls=None,
+                datahandle_cls=_DataHandle,
+                learner_cls=_dSGDLearner,
+                **kw):
+        self.cache['logger_directory'] = _os.path.join(
+            self.state['outputDirectory'],
+            self.cache['task_id']
+        )
+        # self.cache['my_logger'] = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
+        trainer = trainer_cls(
+            data_handle=datahandle_cls(
+                cache=self.cache, input=self.input, state=self.state,
+                dataloader_args=self._dataloader_args
+            )
+        )
+
+        self.out['phase'] = self.input.get('phase', Phase.INIT_RUNS)
+        my_logger = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
+
+        if self.out['phase'] == Phase.INIT_RUNS:
+            self.out.update(**self._init_runs(trainer))
+            """Share default args to remote and freeze"""
+            # self.cache['my_logger'].write("\n Init runs update completed")
+            frozen_args = {}.fromkeys(self._args)
+            for k in frozen_args:
+                frozen_args[k] = self.cache[k]
+            self.cache['frozen_args'] = _FrozenDict(frozen_args)
+            self.out['shared_args'] = self.cache['frozen_args']
+            # self.cache['my_logger'].write("\n Init runs completed")
+            my_logger.write("\n INIT runs completed")
+
+        elif self.out['phase'] == Phase.NEXT_RUN:
+            # self.cache['my_logger'].write("\n Starting phase next run")
+            self.cache.update(**self.input['global_runs'][self.state['clientId']])
+            self.out.update(**self._next_run(trainer,my_logger, dataset_cls))
+            if self.cache['mode'] == Mode.TRAIN:
+                self.out.update(
+                    **self._pretrain_local(
+                        trainer_cls,
+                        datahandle_cls,
+                        trainer.data_handle.get_train_dataset(dataset_cls),
+                        trainer.data_handle.get_validation_dataset(dataset_cls))
+                )
+            my_logger.write("\n NEXT runs completed")
+
+        elif self.out['phase'] == Phase.PRE_COMPUTATION and self.input.get('pretrained_weights'):
+            trainer.load_checkpoint(
+                file_path=self.state['baseDirectory'] + _sep + self.input['pretrained_weights']
+            )
+            self.out['phase'] = Phase.COMPUTATION
+
+        """Initialize learner"""
+        learner = self._get_learner_cls(learner_cls)(trainer=trainer, mp_pool=mp_pool)
+
+        """Track global state among sites."""
+        self.out['mode'] = learner.global_modes.get(self.state['clientId'], self.cache['mode'])
+        """Computation begins..."""
+        if self.out['phase'] == Phase.COMPUTATION:
+            my_logger.write("\n Inside COMPUTATION phase")
+            """ Train/validation and test phases """
+            if self.input.get('save_current_as_best'):
+                learner.trainer.save_checkpoint(
+                    file_path=self.cache['log_dir'] + _sep + self.cache['best_nn_state']
+                )
+
+            """Initialize Learner and assign trainer"""
+            if self.input.get('update'):
+                my_logger.write("\n OUT updated here")
+                self.out.update(**learner.step(my_logger))
+
+            if any(m == Mode.TRAIN for m in learner.global_modes.values()):
+                """
+                All sites must begin/resume the training the same time.
+                To enforce this, we have a 'val_waiting' status. Lagged sites will go to this status, 
+                   and reshuffle the data,
+                take part in the training with everybody until all sites go to 'val_waiting' status.
+                """
+                it, out = learner.to_reduce(my_logger)
+                self.out.update(**out)
+                if it.get('averages') and it.get('metrics'):
+                    my_logger.write("\n Got averages and metrics")
+                    self.cache[Key.TRAIN_SERIALIZABLE].append(
+                        {'averages': it['averages'].serialize(), 'metrics': it['metrics'].serialize()}
+                    )
+                    self.out.update(**trainer.on_iteration_end(0, 0, it))
+
+            if all(m == Mode.VALIDATION for m in learner.global_modes.values()):
+                """
+                Once all sites are in 'val_waiting' status, remote issues 'validation' signal.
+                Once all sites run validation phase, they go to 'train_waiting' status.
+                Once all sites are in this status, remote issues 'train' signal
+                 and all sites reshuffle the indices and resume training.
+                We send the confusion matrix to the remote to accumulate global score for model selection.
+                """
+                self.out.update(**trainer.validation_distributed(dataset_cls))
+                self.out[Key.TRAIN_SERIALIZABLE] = self.cache[Key.TRAIN_SERIALIZABLE]
+                self.cache[Key.TRAIN_SERIALIZABLE] = []
+                self.out['mode'] = Mode.TRAIN_WAITING
+
+            if all(m == Mode.TEST for m in learner.global_modes.values()):
+                self.out.update(**trainer.test_distributed(dataset_cls))
+                self.out['mode'] = self.cache['frozen_args']['mode']
+                self.out['phase'] = Phase.NEXT_RUN_WAITING
+                trainer.save_checkpoint(file_path=self.cache['log_dir'] + _sep + self.cache['latest_nn_state'])
+                _utils.save_cache(self.cache, self.cache['log_dir'])
+
+        elif self.out['phase'] == Phase.SUCCESS:
+            """ This phase receives global scores from the aggregator."""
+            zip_path = f"{self.state['baseDirectory']}{_sep}{self.input['results_zip']}.zip"
+            for i in range(3):
+                _time.sleep(i)
+                if _os.path.exists(zip_path):
+                    _shutil.copy(zip_path, f"{self.state['outputDirectory']}{_sep}{self.input['results_zip']}.zip")
+                    break
+
+    def _get_learner_cls(self, learner_cls):
+
+        if self.cache.get('agg_engine') == AGG_Engine.dSGD:
+            return _dSGDLearner
+
+        elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
+            return _DADLearner
+
+        elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
+            return _PowerSGDLearner
+
+        return learner_cls
+
+    def __call__(self, *args, **kwargs):
+        try:
+            self.compute(*args, **kwargs)
+            return {'output': self.out}
+        except:
+            _tback.print_exc()
+            raise Exception(self.out)
