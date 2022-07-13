@@ -11,11 +11,11 @@ README = (HERE / "README.md").read_text()
 # This call to setup() does all the work
 setup(
     name="coinstac-sparse-dinunet",
-    version="1.0.0",
+    version="1.0.2",
     description="Distributed Sparse Neural Network implementation on COINSTAC.",
     long_description=README,
     long_description_content_type="text/markdown",
-    url="https://github.com/trendscenter/coinstac-sparse-dinunet",
+    url="https://github.com/bishalth01/coinstac-sparse-dinunet",
     author="Bishal Thapaliya",
     author_email="bishalthapaliya16@gmail.com",
     license="MIT",

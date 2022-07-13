@@ -1,6 +1,6 @@
 """
-@author: Aashis Khanal
-@email: sraashis@gmail.com
+@author: Bishal Thapaliya
+@email: bthapaliya16@gmail.com
 """
 
 import datetime as _datetime

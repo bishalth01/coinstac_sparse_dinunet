@@ -1,3 +1,8 @@
+"""
+@author: Bishal Thapaliya
+@email: bthapaliya16@gmail.com
+"""
+
 import os as _os
 from functools import partial as _partial
 

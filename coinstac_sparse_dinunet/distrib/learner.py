@@ -1,3 +1,8 @@
+"""
+@author: Bishal Thapaliya
+@email: bthapaliya16@gmail.com
+"""
+
 from os import sep as _sep
 import torch as _torch
 

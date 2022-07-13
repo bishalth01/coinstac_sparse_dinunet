@@ -1,3 +1,8 @@
+"""
+@author: Bishal Thapaliya
+@email: bthapaliya16@gmail.com
+"""
+
 import datetime as _dt
 import time as _t
 
