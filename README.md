@@ -107,4 +107,4 @@ class MyTrainer(COINNTrainer):
   - Extend [coinstac_sparse_dinunet.metrics.COINNMetrics](https://github.com/bishalth01/coinstac_sparse_dinunet/blob/master/coinstac_sparse_dinunet/metrics/metrics.py)
   - Example: [coinstac_sparse_dinunet.metrics.Prf1a](https://github.com/bishalth01/coinstac_sparse_dinunet/blob/master/coinstac_sparse_dinunet/metrics/metrics.py) for Precision, Recall, F1, and Accuracy
   
-* **Define [Custom Learner](https://github.com/bishalth01/coinstac_sparse_dinunet/blob/master/coinstac_sparse_dinunet/distrib/learner.py) / [custom Aggregator]/ [custom Aggregator](https://github.com/bishalth01/coinstac-sparse-dinunet/blob/main/coinstac-sparse-dinunet/distrib/reducer.py)  (Default is Distributed SGD)**
+* **Define [Custom Learner](https://github.com/bishalth01/coinstac_sparse_dinunet/blob/master/coinstac_sparse_dinunet/distrib/learner.py) / [custom Aggregator]/ [custom Aggregator](https://github.com/bishalth01/coinstac_sparse_dinunet/blob/master/coinstac_sparse_dinunet/distrib/reducer.py)  (Default is Distributed SGD)**
