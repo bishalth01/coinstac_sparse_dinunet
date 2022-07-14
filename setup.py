@@ -11,7 +11,7 @@ README = (HERE / "README.md").read_text()
 # This call to setup() does all the work
 setup(
     name="coinstac-sparse-dinunet",
-    version="1.0.2",
+    version="2.0.0",
     description="Distributed Sparse Neural Network implementation on COINSTAC.",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -27,7 +27,7 @@ setup(
     packages=[
         'coinstac_sparse_dinunet', 'coinstac_sparse_dinunet.config', 'coinstac_sparse_dinunet.data',
         'coinstac_sparse_dinunet.metrics', 'coinstac_sparse_dinunet.distrib',
-        'coinstac_sparse_dinunet.distrib.nodes', 'coinstac_sparse_dinunet.distrib.powersgd', 'coinstac_sparse_dinunet.distrib.rankdad',
+        'coinstac_sparse_dinunet.distrib.nodes',
         'coinstac_sparse_dinunet.nn', 'coinstac_sparse_dinunet.utils', 'coinstac_sparse_dinunet.vision'
     ],
     include_package_data=True,

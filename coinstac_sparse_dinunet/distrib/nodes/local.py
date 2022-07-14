@@ -19,8 +19,6 @@ from coinstac_sparse_dinunet.data import COINNDataHandle as _DataHandle
 from coinstac_sparse_dinunet.utils import FrozenDict as _FrozenDict
 
 from ..learner import COINNLearner as _dSGDLearner
-from ..rankdad import DADLearner as _DADLearner
-from ..powersgd import PowerSGDLearner as _PowerSGDLearner
 
 
 class COINNLocal:
@@ -131,8 +129,7 @@ class COINNLocal:
         # self.cache['my_logger'].write("Completed loading splits for init runs")
         return out
 
-    def _next_run(self, trainer, my_logger, dataset_cls=None):
-        # self.cache['my_logger'].write("\n Inside a function of local next run")
+    def _next_run(self, trainer, dataset_cls=None):
 
         out = {}
         self.cache.update(cursor=0)
@@ -152,10 +149,10 @@ class COINNLocal:
         trainer.init_nn(init_model=True, init_optim=True, set_devices=True, init_weights=True)
         first_model_key = list(trainer.nn.keys())[0]
         first_model = trainer.nn[first_model_key]
-        my_logger.write("\n The previous model parameter sparsity is" + str(_utils.get_model_sps(first_model,  my_logger)))
-        trainer.apply_snip_pruning(dataset_cls, my_logger)
+        #my_logger.write("\n The previous model parameter sparsity is" + str(_utils.get_model_sps(first_model,  my_logger)))
+        trainer.apply_snip_pruning(dataset_cls)
         final_model = trainer.nn[first_model_key]
-        my_logger.write("\n The final model parameter sparsity is" + str(_utils.get_model_sps(final_model,  my_logger)))
+        #my_logger.write("\n The final model parameter sparsity is" + str(_utils.get_model_sps(final_model,  my_logger)))
         self.cache['best_nn_state'] = f"best.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
         self.cache['latest_nn_state'] = f"latest.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
         out['phase'] = Phase.COMPUTATION
@@ -187,10 +184,10 @@ class COINNLocal:
                 datahandle_cls=_DataHandle,
                 learner_cls=_dSGDLearner,
                 **kw):
-        self.cache['logger_directory'] = _os.path.join(
-            self.state['outputDirectory'],
-            self.cache['task_id']
-        )
+        # self.cache['logger_directory'] = _os.path.join(
+        #     self.state['outputDirectory'],
+        #     self.cache['task_id']
+        # )
         # self.cache['my_logger'] = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
         trainer = trainer_cls(
             data_handle=datahandle_cls(
@@ -200,7 +197,6 @@ class COINNLocal:
         )
 
         self.out['phase'] = self.input.get('phase', Phase.INIT_RUNS)
-        my_logger = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
 
         if self.out['phase'] == Phase.INIT_RUNS:
             self.out.update(**self._init_runs(trainer))
@@ -212,12 +208,11 @@ class COINNLocal:
             self.cache['frozen_args'] = _FrozenDict(frozen_args)
             self.out['shared_args'] = self.cache['frozen_args']
             # self.cache['my_logger'].write("\n Init runs completed")
-            my_logger.write("\n INIT runs completed")
 
         elif self.out['phase'] == Phase.NEXT_RUN:
             # self.cache['my_logger'].write("\n Starting phase next run")
             self.cache.update(**self.input['global_runs'][self.state['clientId']])
-            self.out.update(**self._next_run(trainer,my_logger, dataset_cls))
+            self.out.update(**self._next_run(trainer, dataset_cls))
             if self.cache['mode'] == Mode.TRAIN:
                 self.out.update(
                     **self._pretrain_local(
@@ -226,7 +221,7 @@ class COINNLocal:
                         trainer.data_handle.get_train_dataset(dataset_cls),
                         trainer.data_handle.get_validation_dataset(dataset_cls))
                 )
-            my_logger.write("\n NEXT runs completed")
+
 
         elif self.out['phase'] == Phase.PRE_COMPUTATION and self.input.get('pretrained_weights'):
             trainer.load_checkpoint(
@@ -241,7 +236,6 @@ class COINNLocal:
         self.out['mode'] = learner.global_modes.get(self.state['clientId'], self.cache['mode'])
         """Computation begins..."""
         if self.out['phase'] == Phase.COMPUTATION:
-            my_logger.write("\n Inside COMPUTATION phase")
             """ Train/validation and test phases """
             if self.input.get('save_current_as_best'):
                 learner.trainer.save_checkpoint(
@@ -250,8 +244,7 @@ class COINNLocal:
 
             """Initialize Learner and assign trainer"""
             if self.input.get('update'):
-                my_logger.write("\n OUT updated here")
-                self.out.update(**learner.step(my_logger))
+                self.out.update(**learner.step())
 
             if any(m == Mode.TRAIN for m in learner.global_modes.values()):
                 """
@@ -260,10 +253,9 @@ class COINNLocal:
                    and reshuffle the data,
                 take part in the training with everybody until all sites go to 'val_waiting' status.
                 """
-                it, out = learner.to_reduce(my_logger)
+                it, out = learner.to_reduce()
                 self.out.update(**out)
                 if it.get('averages') and it.get('metrics'):
-                    my_logger.write("\n Got averages and metrics")
                     self.cache[Key.TRAIN_SERIALIZABLE].append(
                         {'averages': it['averages'].serialize(), 'metrics': it['metrics'].serialize()}
                     )
@@ -303,11 +295,11 @@ class COINNLocal:
         if self.cache.get('agg_engine') == AGG_Engine.dSGD:
             return _dSGDLearner
 
-        elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
-            return _DADLearner
-
-        elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
-            return _PowerSGDLearner
+        # elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
+        #     return _DADLearner
+        #
+        # elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
+        #     return _PowerSGDLearner
 
         return learner_cls
 

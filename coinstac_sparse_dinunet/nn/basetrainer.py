@@ -76,7 +76,7 @@ class NNTrainer:
         return F.conv2d(x, params.weight * params.weight_mask, params.bias,
                         params.stride, params.padding, params.dilation, params.groups)
 
-    def apply_mask_to_model(self, model, mask, my_logger):
+    def apply_mask_to_model(self, model, mask):
         prunable_layers = filter(
             lambda layer: isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear),
             model.modules()
@@ -106,8 +106,7 @@ class NNTrainer:
 
         return model
 
-    def apply_snip_pruning(self, dataset_cls, my_logger):
-        sparsity_level = 0.15
+    def apply_snip_pruning(self, dataset_cls):
         train_dataset = self.data_handle.get_train_dataset_for_masking(dataset_cls=dataset_cls)
         loader = self.data_handle.get_loader('train', dataset=train_dataset, drop_last=True, shuffle=True)
         mini_batch = next(iter(loader))  # inputs, labels, ix
@@ -122,16 +121,15 @@ class NNTrainer:
                     layer.weight.requires_grad = False
 
                 if isinstance(layer, nn.Linear):
-                    my_logger.write("Inside forward hook")
                     layer.forward = types.MethodType(self.snip_forward_linear, layer)
 
                 if isinstance(layer, nn.Conv2d):
-                    my_logger.write("Inside forward hook")
                     layer.forward = types.MethodType(self.snip_forward_conv2d, layer)
 
             net.to(device)
             net.zero_grad()
             it = self.single_iteration_for_masking(net, mini_batch)
+            sparsity_level = abs(1-it['sparsity_level'])
             it['loss'].backward()
 
             grads_abs = []
@@ -156,7 +154,7 @@ class NNTrainer:
             # for i in range(len(grads_abs)):
             #     initialize_mult.append(grads_abs[i] / norm_factor)
 
-            self.nn[model_key] = self.apply_mask_to_model(self.nn[model_key], keep_masks, my_logger)
+            self.nn[model_key] = self.apply_mask_to_model(self.nn[model_key], keep_masks)
 
 
     def _set_gpus(self):

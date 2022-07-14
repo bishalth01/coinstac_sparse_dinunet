@@ -27,7 +27,7 @@ def performance_improved_(epoch, score, cache):
 def stop_training_(epoch, cache):
     return epoch - cache['best_val_epoch'] > cache.get('patience', cache['epochs'])
 
-def get_model_sps(model, my_logger):
+def get_model_sps(model):
     nonzero = total = 0
     for name, param in model.named_parameters():
         if 'mask' not in name:

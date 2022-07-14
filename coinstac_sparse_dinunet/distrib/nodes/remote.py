@@ -15,8 +15,7 @@ from coinstac_sparse_dinunet.utils import performance_improved_, stop_training_
 from coinstac_sparse_dinunet.utils.logger import *
 from coinstac_sparse_dinunet.vision import plotter as _plot
 from ..reducer import COINNReducer as _dSGDReducer
-from ..rankdad import DADReducer as _DADReducer
-from ..powersgd import PowerSGDReducer as _PowerSGDReducer
+
 
 
 class EmptyDataHandle:
@@ -233,14 +232,14 @@ class COINNRemote:
             self.cache['task_id']
         )
         self.out['phase'] = self.input.get('phase', Phase.INIT_RUNS)
-        my_logger = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
+        #my_logger = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
         if check(all, 'phase', Phase.INIT_RUNS, self.input):
             """
             Initialize all folds and loggers
             """
             self._init_runs()
             self.out['global_runs'] = self._next_run(trainer)
-            my_logger.write("\n INIT Runs completed. Executing NEXT RUN")
+            #my_logger.write("\n INIT Runs completed. Executing NEXT RUN")
             self.out['phase'] = Phase.NEXT_RUN
 
         if check(all, 'phase', Phase.PRE_COMPUTATION, self.input):
@@ -250,12 +249,11 @@ class COINNRemote:
         self.out['global_modes'] = self._set_mode()
         if check(all, 'phase', Phase.COMPUTATION, self.input):
             """Initialize reducer"""
-            my_logger.write("\n Inside computation phase in remote")
+            #my_logger.write("\n Inside computation phase in remote")
             reducer = self._get_reducer_cls(reducer_cls)(trainer=trainer, mp_pool=mp_pool)
 
             self.out['phase'] = Phase.COMPUTATION
             if check(all, 'reduce', True, self.input):
-                my_logger.write("\n All reduced")
                 self.out.update(**reducer.reduce())
 
             if check(all, 'mode', Mode.VALIDATION_WAITING, self.input):
@@ -266,7 +264,6 @@ class COINNRemote:
                     self.out['global_modes'] = self._set_mode(mode=Mode.TRAIN)
 
             if check(all, 'mode', Mode.TRAIN_WAITING, self.input):
-                my_logger.write("\n Train waiting")
                 epoch_info = self._on_epoch_end(reducer)
                 nxt_epoch = self._next_epoch(**epoch_info)
                 self.out['global_modes'] = self._set_mode(mode=nxt_epoch['mode'])
@@ -278,7 +275,6 @@ class COINNRemote:
             We transition to new fold if there is any left, else we stop with a success signal.
             """
 
-            my_logger.write("\n NEXT RUN END Stage")
             self._on_run_end(trainer)
             if len(self.cache['folds']) > 0:
                 self.out['global_runs'] = self._next_run(trainer)
@@ -307,12 +303,12 @@ class COINNRemote:
     def _get_reducer_cls(self, reducer_cls):
         if self.cache.get('agg_engine') == AGG_Engine.dSGD:
             return _dSGDReducer
-
-        elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
-            return _DADReducer
-
-        elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
-            return _PowerSGDReducer
+        #
+        # elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
+        #     return _DADReducer
+        #
+        # elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
+        #     return _PowerSGDReducer
 
         return reducer_cls
 

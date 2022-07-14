@@ -22,10 +22,9 @@ class COINNLearner:
         self.dtype = f"float{self.cache['precision_bits']}"
         self.device = trainer.device["gpu"]
 
-    def step(self, my_logger) -> dict:
+    def step(self) -> dict:
         out = {}
         grads = _tu.load_arrays(self.state['baseDirectory'] + _sep + self.input['avg_grads_file'])
-        my_logger.write("Loading grads from remote file")
         first_model = list(self.trainer.nn.keys())[0]
         for i, param in enumerate(self.trainer.nn[first_model].parameters()):
             param.grad = _torch.tensor(grads[i], dtype=_torch.float32).to(self.device)
@@ -34,18 +33,15 @@ class COINNLearner:
         self.trainer.optimizer[first_optim].step()
         return out
 
-    def backward(self, my_logger):
-        my_logger.write("\n Inside backward function")
+    def backward(self):
         out = {}
         first_model = list(self.trainer.nn.keys())[0]
         first_optim = list(self.trainer.optimizer.keys())[0]
 
         self.trainer.nn[first_model].train()
-        my_logger.write("\n Training complete")
         self.trainer.optimizer[first_optim].zero_grad()
 
         its = []
-        my_logger.write("\n Getting backward for each batch")
         for _ in range(self.cache['local_iterations']):
             batch, nxt_iter_out = self.trainer.data_handle.next_iter()
             it = self.trainer.iteration(batch)
@@ -54,8 +50,8 @@ class COINNLearner:
             out.update(**nxt_iter_out)
         return self.trainer.reduce_iteration(its), out
 
-    def to_reduce(self, my_logger):
-        it, out = self.backward(my_logger)
+    def to_reduce(self):
+        it, out = self.backward()
         first_model = list(self.trainer.nn.keys())[0]
         out['grads_file'] = _conf.grads_file
         grads = _tu.extract_grads(self.trainer.nn[first_model], dtype=self.dtype)
@@ -64,5 +60,4 @@ class COINNLearner:
             _np.array(grads, dtype=object)
         )
         out['reduce'] = True
-        my_logger.write("\n Reduction completed. Sending now")
         return it, out

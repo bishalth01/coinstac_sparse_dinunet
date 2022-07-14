@@ -75,14 +75,15 @@ class MyTrainer(COINNTrainer):
     
     
     def single_iteration_for_masking(self, model, batch):
-        # Interation for masking. Defines specific output and loss functions for masking using SNIP.
+        sparsity_level = 0.85   #Define the level of sparsity in the network
         inputs, labels = batch['inputs'].to(self.device['gpu']).float(), batch['labels'].to(self.device['gpu']).long()
         indices = batch['ix'].to(self.device['gpu']).long()
 
-        out = F.log_softmax(model(inputs), 1)
+        model.zero_grad()
+        out = F.log_softmax(model.forward(inputs), 1)
         loss = F.nll_loss(out, labels)
+        return {'out': out, 'loss': loss, 'indices': indices, 'sparsity_level': sparsity_level}
 
-        return {'out': out, 'loss': loss, 'indices': indices}
 
 
     def iteration(self, batch):
