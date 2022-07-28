@@ -11,27 +11,18 @@ pip install coinstac-sparse-dinunet
 #### Highlights:
 ```
 1. Creates sparse network based on single shot pruning SNIP algorithm (https://arxiv.org/abs/1810.02340). 
-2. Handles multi-network/complex training schemes. 
+2. Performs distributed training and optimization with reduced bandwidth.
 3. Automatic data splitting/k-fold cross validation.
 4. Automatic model checkpointing.
 5. GPU enabled local sites.
 6. Customizable metrics(w/Auto serialization between nodes) to work with any schemes.
 7. We can integrate any custom reduction and learning mechanism by extending coinstac_sparse_dinunet.distrib.reducer/learner.
-8. Realtime profiling each sites by specifying in compspec file(see dinune_fsv example below for details). 
 ...
 ```
 
 
 <hr />
 
-[//]: # (![DINUNET]&#40;assets/dinunet.png&#41;)
-
-
-[//]: # (### Working examples:)
-
-[//]: # (1. **[FreeSurfer volumes classification.]&#40;https://github.com/trendscenter/dinunet_implementations/&#41;**)
-
-[//]: # (2. **[VBM 3D images classification.]&#40;https://github.com/trendscenter/dinunet_implementations_gpu&#41;**)
 
 ### [Running an analysis](https://github.com/trendscenter/coinstac-instructions/blob/master/coinstac-how-to-run-analysis.md) in the coinstac App.
 ### Add a new NN computation to COINSTAC (Development guide):
@@ -74,11 +65,13 @@ class MyTrainer(COINNTrainer):
         self.nn['model'] = MYModel(in_size=self.cache['input_size'], out_size=self.cache['num_class'])
     
     
-    def single_iteration_for_masking(self, model, batch):
-        sparsity_level = 0.85   #Define the level of sparsity in the network
+   def single_iteration_for_masking(self, model, batch):
+    
+        #Defines sparsity level, loss function and other parameters to perform masking using SNIP
+        
+        sparsity_level = 0.85
         inputs, labels = batch['inputs'].to(self.device['gpu']).float(), batch['labels'].to(self.device['gpu']).long()
         indices = batch['ix'].to(self.device['gpu']).long()
-
         model.zero_grad()
         out = F.log_softmax(model.forward(inputs), 1)
         loss = F.nll_loss(out, labels)

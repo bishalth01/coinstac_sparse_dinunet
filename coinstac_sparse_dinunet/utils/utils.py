@@ -36,7 +36,7 @@ def get_model_sps(model):
             nonzero += nz_count
             total += total_params
     abs_sps = 100 * (total - nonzero) / total
-    return abs_sps, nonzero
+    return abs_sps
 
 
 def duration(cache: dict, begin, key):

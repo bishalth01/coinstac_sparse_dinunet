@@ -9,6 +9,7 @@ import torch as _torch
 from coinstac_sparse_dinunet import config as _conf
 from coinstac_sparse_dinunet.utils import tensorutils as _tu
 import numpy as _np
+import coinstac_sparse_dinunet.utils as _utils
 
 
 class COINNLearner:
@@ -25,9 +26,13 @@ class COINNLearner:
     def step(self) -> dict:
         out = {}
         grads = _tu.load_arrays(self.state['baseDirectory'] + _sep + self.input['avg_grads_file'])
+        grad_index = 0
         first_model = list(self.trainer.nn.keys())[0]
-        for i, param in enumerate(self.trainer.nn[first_model].parameters()):
-            param.grad = _torch.tensor(grads[i], dtype=_torch.float32).to(self.device)
+
+        for i, param in enumerate(self.trainer.nn[first_model].named_parameters()):
+            if 'mask' not in param[0]:
+                param[1].grad = _torch.tensor(grads[grad_index], dtype=_torch.float32).to(self.device)
+                grad_index += 1
 
         first_optim = list(self.trainer.optimizer.keys())[0]
         self.trainer.optimizer[first_optim].step()
@@ -40,7 +45,6 @@ class COINNLearner:
 
         self.trainer.nn[first_model].train()
         self.trainer.optimizer[first_optim].zero_grad()
-
         its = []
         for _ in range(self.cache['local_iterations']):
             batch, nxt_iter_out = self.trainer.data_handle.next_iter()

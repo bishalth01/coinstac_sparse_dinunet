@@ -51,6 +51,7 @@ class COINNLocal:
                  agg_engine='dSGD',
                  num_reducers=2,
                  precision_bits=32,
+                 sparse_training=True,
                  **kw):
 
         self.out = {}
@@ -82,6 +83,7 @@ class COINNLocal:
         self._args['agg_engine'] = agg_engine
         self._args['num_reducers'] = num_reducers
         self._args['precision_bits'] = precision_bits
+        self._args['sparse_training'] = sparse_training
 
         self._args.update(**kw)
         self._args = _FrozenDict(self._args)
@@ -121,12 +123,10 @@ class COINNLocal:
         out.update(trainer.data_handle.prepare_data())
         self.cache['num_folds'] = len(self.cache['splits'])
         trainer.init_nn(set_devices=True)
-        # self.cache['my_logger'].write("Initializing nn init runs completed")
         out['data_size'] = {}
         for k, sp in self.cache['splits'].items():
             sp = _json.loads(open(self.cache['split_dir'] + _os.sep + sp).read())
             out['data_size'][k] = dict((key, len(sp.get(key, []))) for key in sp)
-        # self.cache['my_logger'].write("Completed loading splits for init runs")
         return out
 
     def _next_run(self, trainer, dataset_cls=None):
@@ -141,18 +141,16 @@ class COINNLocal:
             f"fold_{self.cache['split_ix']}"
         )
 
-
         _os.makedirs(self.cache['log_dir'], exist_ok=True)
 
         # Initialize a neural network weights and everything
-
         trainer.init_nn(init_model=True, init_optim=True, set_devices=True, init_weights=True)
-        first_model_key = list(trainer.nn.keys())[0]
-        first_model = trainer.nn[first_model_key]
-        #my_logger.write("\n The previous model parameter sparsity is" + str(_utils.get_model_sps(first_model,  my_logger)))
-        trainer.apply_snip_pruning(dataset_cls)
-        final_model = trainer.nn[first_model_key]
-        #my_logger.write("\n The final model parameter sparsity is" + str(_utils.get_model_sps(final_model,  my_logger)))
+        if self._args["sparse_training"]:
+            # Get masks applying SNIP algorithm and apply mask to model
+            masks_for_pruning = trainer.apply_snip_pruning(dataset_cls)
+            # Register forward hook using those masks to make sure gradients are zero
+            trainer.register_pre_hook_mask(masks_for_pruning)
+
         self.cache['best_nn_state'] = f"best.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
         self.cache['latest_nn_state'] = f"latest.{self.cache['task_id']}-{self.cache['split_ix']}.pt"
         out['phase'] = Phase.COMPUTATION
@@ -184,11 +182,11 @@ class COINNLocal:
                 datahandle_cls=_DataHandle,
                 learner_cls=_dSGDLearner,
                 **kw):
-        # self.cache['logger_directory'] = _os.path.join(
-        #     self.state['outputDirectory'],
-        #     self.cache['task_id']
-        # )
-        # self.cache['my_logger'] = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
+        self.cache['logger_directory'] = _os.path.join(
+            self.state['outputDirectory'],
+            self.cache['task_id']
+        )
+
         trainer = trainer_cls(
             data_handle=datahandle_cls(
                 cache=self.cache, input=self.input, state=self.state,
@@ -201,16 +199,14 @@ class COINNLocal:
         if self.out['phase'] == Phase.INIT_RUNS:
             self.out.update(**self._init_runs(trainer))
             """Share default args to remote and freeze"""
-            # self.cache['my_logger'].write("\n Init runs update completed")
+
             frozen_args = {}.fromkeys(self._args)
             for k in frozen_args:
                 frozen_args[k] = self.cache[k]
             self.cache['frozen_args'] = _FrozenDict(frozen_args)
             self.out['shared_args'] = self.cache['frozen_args']
-            # self.cache['my_logger'].write("\n Init runs completed")
 
         elif self.out['phase'] == Phase.NEXT_RUN:
-            # self.cache['my_logger'].write("\n Starting phase next run")
             self.cache.update(**self.input['global_runs'][self.state['clientId']])
             self.out.update(**self._next_run(trainer, dataset_cls))
             if self.cache['mode'] == Mode.TRAIN:
@@ -221,7 +217,6 @@ class COINNLocal:
                         trainer.data_handle.get_train_dataset(dataset_cls),
                         trainer.data_handle.get_validation_dataset(dataset_cls))
                 )
-
 
         elif self.out['phase'] == Phase.PRE_COMPUTATION and self.input.get('pretrained_weights'):
             trainer.load_checkpoint(
@@ -294,12 +289,6 @@ class COINNLocal:
 
         if self.cache.get('agg_engine') == AGG_Engine.dSGD:
             return _dSGDLearner
-
-        # elif self.cache.get('agg_engine') == AGG_Engine.rankDAD:
-        #     return _DADLearner
-        #
-        # elif self.cache.get('agg_engine') == AGG_Engine.powerSGD:
-        #     return _PowerSGDLearner
 
         return learner_cls
 

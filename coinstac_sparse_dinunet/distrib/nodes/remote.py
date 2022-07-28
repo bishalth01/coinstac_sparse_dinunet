@@ -232,14 +232,12 @@ class COINNRemote:
             self.cache['task_id']
         )
         self.out['phase'] = self.input.get('phase', Phase.INIT_RUNS)
-        #my_logger = open(self.cache['logger_directory'] + _os.sep + f"mylogs.json", 'a')
         if check(all, 'phase', Phase.INIT_RUNS, self.input):
             """
             Initialize all folds and loggers
             """
             self._init_runs()
             self.out['global_runs'] = self._next_run(trainer)
-            #my_logger.write("\n INIT Runs completed. Executing NEXT RUN")
             self.out['phase'] = Phase.NEXT_RUN
 
         if check(all, 'phase', Phase.PRE_COMPUTATION, self.input):
@@ -249,7 +247,6 @@ class COINNRemote:
         self.out['global_modes'] = self._set_mode()
         if check(all, 'phase', Phase.COMPUTATION, self.input):
             """Initialize reducer"""
-            #my_logger.write("\n Inside computation phase in remote")
             reducer = self._get_reducer_cls(reducer_cls)(trainer=trainer, mp_pool=mp_pool)
 
             self.out['phase'] = Phase.COMPUTATION

@@ -66,8 +66,7 @@ class NNTrainer:
         if init_weights: self._init_nn_weights(init_weights=init_weights)
         if set_devices: self._set_gpus()
 
-
-    def snip_forward_linear(self,params, x):
+    def snip_forward_linear(self, params, x):
 
         return F.linear(x, params.weight * params.weight_mask, params.bias)
 
@@ -77,34 +76,67 @@ class NNTrainer:
                         params.stride, params.padding, params.dilation, params.groups)
 
     def apply_mask_to_model(self, model, mask):
+
         prunable_layers = filter(
             lambda layer: isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear),
             model.modules()
         )
-        # print(torch.sum(torch.cat([torch.flatten(x == 1) for x in mask])))
-        total_non_zero = 0
         for layer, keep_mask in zip(prunable_layers, mask):
             assert (layer.weight.shape == keep_mask.shape)
-
-            def hook_factory(keep_mask):
-                """
-                The hook function can't be defined directly here because of Python's
-                late binding which would result in all hooks getting the very last
-                mask! Getting it through another function forces early binding.
-                """
-
-                def hook(grads):
-                    return grads * keep_mask
-
-                return hook
-
-            # Step 1: Set the masked weights to zero (NB the biases are ignored)
-            # Step 2: Make sure their gradients remain zero
+            # Set the masked weights to zero (NB the biases are ignored)
             layer.weight.data[keep_mask == 0.] = 0.
-            total_non_zero += torch.sum(torch.cat([torch.flatten(x != 0.) for x in layer.weight.data]))
-            layer.weight.register_hook(hook_factory(keep_mask))
 
         return model
+
+    @staticmethod
+    def _forward_pre_hook(module, x):
+        module.mask.requires_grad_(False)
+        mask = module.mask
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        module.weight.data.mul_(mask.to(module.weight.to(device)))
+
+    def register_pre_hook_mask(self, masks=None):
+        masks_count = 0
+        if masks is not None:
+            print("Registering Mask!")
+        assert masks is not None, 'Masks should be generated first.'
+        for model_key in self.nn:
+            for name, module in self.nn[model_key].named_modules():
+                if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
+                    module.mask = nn.Parameter(masks[masks_count]).requires_grad_(False).to(
+                        module.weight.to(self.device['gpu']))
+                    masks_count += 1
+                    module.register_forward_pre_hook(self._forward_pre_hook)
+
+    # def apply_mask_to_model(self, model, mask):
+    #     prunable_layers = filter(
+    #         lambda layer: isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear),
+    #         model.modules()
+    #     )
+    #     # print(torch.sum(torch.cat([torch.flatten(x == 1) for x in mask])))
+    #     total_non_zero = 0
+    #     for layer, keep_mask in zip(prunable_layers, mask):
+    #         assert (layer.weight.shape == keep_mask.shape)
+    #
+    #         def hook_factory(keep_mask):
+    #             """
+    #             The hook function can't be defined directly here because of Python's
+    #             late binding which would result in all hooks getting the very last
+    #             mask! Getting it through another function forces early binding.
+    #             """
+    #
+    #             def hook(grads):
+    #                 return grads * keep_mask
+    #
+    #             return hook
+    #
+    #         # Step 1: Set the masked weights to zero (NB the biases are ignored)
+    #         # Step 2: Make sure their gradients remain zero
+    #         layer.weight.data[keep_mask == 0.] = 0.
+    #         total_non_zero += torch.sum(torch.cat([torch.flatten(x != 0.) for x in layer.weight.data]))
+    #         layer.weight.register_hook(hook_factory(keep_mask))
+    #
+    #     return model
 
     def apply_snip_pruning(self, dataset_cls):
         train_dataset = self.data_handle.get_train_dataset_for_masking(dataset_cls=dataset_cls)
@@ -129,7 +161,7 @@ class NNTrainer:
             net.to(device)
             net.zero_grad()
             it = self.single_iteration_for_masking(net, mini_batch)
-            sparsity_level = abs(1-it['sparsity_level'])
+            sparsity_level = abs(1 - it['sparsity_level'])
             it['loss'].backward()
 
             grads_abs = []
@@ -155,7 +187,7 @@ class NNTrainer:
             #     initialize_mult.append(grads_abs[i] / norm_factor)
 
             self.nn[model_key] = self.apply_mask_to_model(self.nn[model_key], keep_masks)
-
+            return keep_masks
 
     def _set_gpus(self):
         self.device['gpu'] = _torch.device("cpu")

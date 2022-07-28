@@ -43,7 +43,7 @@ def caste_ndarray(a, dtype='float32'):
 
 def extract_grads(model, dtype='float32'):
     return [
-        caste_ndarray(p.grad.detach().cpu().numpy(), dtype) for p in model.parameters()
+        caste_ndarray(p.grad.detach().cpu().numpy(), dtype) for name, p in model.named_parameters() if 'mask' not in name
     ]
 
 
